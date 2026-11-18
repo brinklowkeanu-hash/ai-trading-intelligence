@@ -384,7 +384,10 @@ def get_market_data(symbol, period, interval):
 # VERSION 3 - GEMINI AI RESEARCH ANALYST
 # --------------------------------------------------
 
+
 def run_ai_analysis(market_name, market, timeframe):
+
+    import time
 
     api_key = st.secrets.get("GEMINI_API_KEY", "")
 
@@ -535,32 +538,84 @@ Do not provide a fabricated entry price, stop loss,
 profit target or probability of success.
 """
 
+    # Gemini API configuration
     endpoint = (
         "https://generativelanguage.googleapis.com/"
         "v1beta/models/gemini-3.8-flash:generateContent"
     )
 
-    response = requests.post(
-    url,
-    params={"key": api_key},
-    json=payload,
-    timeout=(20, 180)
-)
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"Gemini API error {response.status_code}: "
-            f"{response.text[:500]}"
-        )
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 2500
+        }
+    }
 
-    result = response.json()
+    # API request with automatic retries
+    for attempt in range(3):
 
-    try:
-        return result["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, TypeError):
-        raise RuntimeError(
-            "Gemini returned an unexpected response. "
-            + str(result)[:500]
-        )
+        try:
+
+            response = requests.post(
+                endpoint,
+                params={"key": api_key},
+                json=payload,
+                timeout=(20, 180)
+            )
+
+            if response.status_code == 429 or response.status_code >= 500:
+
+                if attempt < 2:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Gemini API error {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+
+            result = response.json()
+
+            try:
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+
+            except (KeyError, IndexError, TypeError):
+                raise RuntimeError(
+                    "Gemini returned an unexpected response. "
+                    + str(result)[:500]
+                )
+
+        except requests.exceptions.Timeout:
+
+            if attempt == 2:
+                raise RuntimeError(
+                    "Gemini API timed out after 3 attempts. "
+                    "Please try again later."
+                )
+
+            time.sleep(2 ** (attempt + 1))
+
+        except requests.exceptions.RequestException as error:
+
+            if attempt == 2:
+                raise RuntimeError(
+                    f"Gemini connection failed: {error}"
+                )
+
+            time.sleep(2 ** (attempt + 1))
+
+    raise RuntimeError(
+        "Gemini analysis could not be completed."
+    )
+
 
 # --------------------------------------------------
 # SIDEBAR

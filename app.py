@@ -559,7 +559,7 @@ profit target or probability of success.
     }
 
     # API request with automatic retries
-    for attempt in range(3):
+    for attempt in range(5):
 
         try:
 
@@ -572,9 +572,10 @@ profit target or probability of success.
 
             if response.status_code == 429 or response.status_code >= 500:
 
-                if attempt < 2:
-                    time.sleep(2 ** (attempt + 1))
-                    continue
+                if attempt < 4:
+    wait_time = [5, 10, 20, 30, 45][attempt]
+    time.sleep(wait_time)
+    continue
 
             if response.status_code != 200:
                 raise RuntimeError(

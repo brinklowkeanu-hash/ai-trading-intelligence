@@ -298,8 +298,6 @@ def get_news(search_query):
             "Google News returned an invalid RSS feed."
         )
 
-        ]]
-
     except requests.exceptions.Timeout:
         raise RuntimeError(
             "GDELT connection timed out. Try again later."

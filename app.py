@@ -572,7 +572,7 @@ profit target or probability of success.
 
             if response.status_code == 429 or response.status_code >= 500:
 
-                if attempt < 4:
+            if attempt < 4:
     wait_time = [5, 10, 20, 30, 45][attempt]
     time.sleep(wait_time)
     continue

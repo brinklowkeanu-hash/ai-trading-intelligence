@@ -1036,3 +1036,336 @@ st.caption(
     "Verify important news and economic releases "
     "against their original sources."
 )
+
+
+# =====================================================
+# VERSION 4.1 - MULTI-TIMEFRAME MARKET INTELLIGENCE
+# =====================================================
+
+import yfinance as yf
+import pandas as pd
+import streamlit as st
+from datetime import datetime
+
+# -----------------------------
+# MARKET CONFIGURATION
+# -----------------------------
+
+MARKETS_V4 = {
+    "Gold": "GC=F",
+    "Silver": "SI=F",
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "JPY=X",
+    "AUD/USD": "AUDUSD=X",
+    "USD/CAD": "CAD=X",
+    "USD/CHF": "CHF=X",
+    "NZD/USD": "NZDUSD=X",
+    "Bitcoin": "BTC-USD",
+    "Ethereum": "ETH-USD",
+    "S&P 500": "^GSPC",
+    "NASDAQ": "^IXIC",
+    "Dow Jones": "^DJI",
+    "Crude Oil": "CL=F"
+}
+
+TIMEFRAMES_V4 = {
+    "5 Minute": "5m",
+    "15 Minute": "15m",
+    "1 Hour": "1h",
+    "4 Hour": "1h",
+    "Daily": "1d"
+}
+
+# Yahoo Finance data periods.
+# 5m and 15m are limited to recent history.
+TIMEFRAME_PERIODS = {
+    "5 Minute": "5d",
+    "15 Minute": "5d",
+    "1 Hour": "1mo",
+    "4 Hour": "3mo",
+    "Daily": "1y"
+}
+
+# -----------------------------
+# MARKET DATA COLLECTION
+# -----------------------------
+
+@st.cache_data(ttl=300)
+def get_market_data_v4(symbol, interval, period):
+
+    data = yf.download(
+        symbol,
+        period=period,
+        interval=interval,
+        progress=False,
+        auto_adjust=True
+    )
+
+    if data.empty:
+        return None
+
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+
+    close = data["Close"].dropna()
+
+    if len(close) < 20:
+        return None
+
+    return close
+
+
+# -----------------------------
+# TECHNICAL ANALYSIS
+# -----------------------------
+
+def analyse_market_v4(close):
+
+    current = float(close.iloc[-1])
+    previous = float(close.iloc[-2])
+
+    ema9 = float(
+        close.ewm(span=9, adjust=False).mean().iloc[-1]
+    )
+
+    ema20 = float(
+        close.ewm(span=20, adjust=False).mean().iloc[-1]
+    )
+
+    change = (
+        (current - previous) / previous
+    ) * 100
+
+    if current > ema9 > ema20:
+        trend = "BULLISH"
+
+    elif current < ema9 < ema20:
+        trend = "BEARISH"
+
+    else:
+        trend = "NEUTRAL"
+
+    if trend == "BULLISH":
+        strength = 2
+
+    elif trend == "BEARISH":
+        strength = 2
+
+    else:
+        strength = 0
+
+    return {
+        "Price": current,
+        "Change %": change,
+        "EMA 9": ema9,
+        "EMA 20": ema20,
+        "Trend": trend,
+        "Strength": strength
+    }
+
+
+# -----------------------------
+# VERSION 4.1 DASHBOARD
+# -----------------------------
+
+st.divider()
+
+st.header(
+    "🔎 Version 4.1 - Multi-Timeframe Scanner"
+)
+
+st.write(
+    "Scanning 15 markets across five timeframes."
+)
+
+st.caption(
+    "Data provider: Yahoo Finance | "
+    "Refresh interval: 5 minutes"
+)
+
+if st.button(
+    "🚀 RUN FULL MARKET SCAN",
+    key="v41_full_scan"
+):
+
+    all_results = []
+
+    progress = st.progress(0)
+
+    status = st.empty()
+
+    total = (
+        len(MARKETS_V4) *
+        len(TIMEFRAMES_V4)
+    )
+
+    completed = 0
+
+    for market, symbol in MARKETS_V4.items():
+
+        for timeframe, interval in TIMEFRAMES_V4.items():
+
+            status.write(
+                f"Scanning {market} - {timeframe}..."
+            )
+
+            try:
+
+                period = TIMEFRAME_PERIODS[timeframe]
+
+                close = get_market_data_v4(
+                    symbol,
+                    interval,
+                    period
+                )
+
+                if close is not None:
+
+                    analysis = analyse_market_v4(close)
+
+                    all_results.append({
+                        "Market": market,
+                        "Timeframe": timeframe,
+                        **analysis
+                    })
+
+            except Exception as error:
+
+                pass
+
+            completed += 1
+
+            progress.progress(
+                completed / total
+            )
+
+    status.success(
+        "Multi-timeframe market scan completed!"
+    )
+
+    # -----------------------------
+    # DISPLAY RESULTS
+    # -----------------------------
+
+    if all_results:
+
+        df = pd.DataFrame(all_results)
+
+        st.subheader("Market Analysis Results")
+
+        selected_timeframe = st.selectbox(
+            "Select timeframe",
+            list(TIMEFRAMES_V4.keys()),
+            key="v41_timeframe_filter"
+        )
+
+        filtered = df[
+            df["Timeframe"] == selected_timeframe
+        ].copy()
+
+        st.dataframe(
+            filtered,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # -----------------------------
+        # MARKET DIRECTION SUMMARY
+        # -----------------------------
+
+        st.subheader("Market Direction")
+
+        bullish = len(
+            df[df["Trend"] == "BULLISH"]
+        )
+
+        bearish = len(
+            df[df["Trend"] == "BEARISH"]
+        )
+
+        neutral = len(
+            df[df["Trend"] == "NEUTRAL"]
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric("Bullish", bullish)
+
+        col2.metric("Bearish", bearish)
+
+        col3.metric("Neutral", neutral)
+
+        # -----------------------------
+        # MULTI-TIMEFRAME AGREEMENT
+        # -----------------------------
+
+        st.subheader(
+            "Multi-Timeframe Trend Agreement"
+        )
+
+        summary = df.pivot(
+            index="Market",
+            columns="Timeframe",
+            values="Trend"
+        )
+
+        st.dataframe(
+            summary,
+            use_container_width=True
+        )
+
+        # -----------------------------
+        # STRONGEST INITIAL SETUPS
+        # -----------------------------
+
+        st.subheader(
+            "Strongest Initial Opportunities"
+        )
+
+        directional = df[
+            df["Trend"] != "NEUTRAL"
+        ].copy()
+
+        directional["Strength"] = (
+            directional["Change %"].abs()
+        )
+
+        directional = directional.sort_values(
+            "Strength",
+            ascending=False
+        )
+
+        st.dataframe(
+            directional[
+                [
+                    "Market",
+                    "Timeframe",
+                    "Trend",
+                    "Change %",
+                    "Price"
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.info(
+            "These are preliminary technical observations, "
+            "not confirmed trade signals. "
+            "Multi-timeframe confirmation and risk "
+            "management will be developed in later versions."
+        )
+
+        st.caption(
+            f"Last scan completed: "
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+    else:
+
+        st.warning(
+            "No market data received. "
+            "Check Yahoo Finance availability "
+            "and try again."
+        )

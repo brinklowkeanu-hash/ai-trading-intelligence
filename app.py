@@ -1369,3 +1369,456 @@ if st.button(
             "Check Yahoo Finance availability "
             "and try again."
         )
+
+
+# =====================================================
+# VERSION 4.2 - TECHNICAL SETUP DETECTION ENGINE
+# =====================================================
+
+import numpy as np
+
+st.divider()
+st.header("🎯 Version 4.2 - Technical Setup Detection")
+
+TIMEFRAMES_V42 = {
+    "5 Minute": ("5m", "5d"),
+    "15 Minute": ("15m", "5d"),
+    "1 Hour": ("1h", "1mo"),
+    "4 Hour": ("1h", "3mo"),
+    "Daily": ("1d", "1y")
+}
+
+
+# -----------------------------------------------------
+# OHLC DATA COLLECTION
+# -----------------------------------------------------
+
+@st.cache_data(ttl=300)
+def get_ohlc_v42(symbol, timeframe):
+
+    interval, period = TIMEFRAMES_V42[timeframe]
+
+    data = yf.download(
+        symbol,
+        period=period,
+        interval=interval,
+        progress=False,
+        auto_adjust=True
+    )
+
+    if data.empty:
+        return None
+
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+
+    required = ["Open", "High", "Low", "Close"]
+
+    if not all(col in data.columns for col in required):
+        return None
+
+    data = data.copy()
+
+    data = data.dropna(subset=required)
+
+    # Build genuine 4-hour candles from hourly data
+    if timeframe == "4 Hour":
+
+        data = data.resample("4h").agg({
+            "Open": "first",
+            "High": "max",
+            "Low": "min",
+            "Close": "last",
+            "Volume": "sum"
+        })
+
+        data = data.dropna(subset=required)
+
+    if len(data) < 50:
+        return None
+
+    return data
+
+
+# -----------------------------------------------------
+# TECHNICAL INDICATORS
+# -----------------------------------------------------
+
+def calculate_indicators_v42(data):
+
+    df = data.copy()
+
+    close = df["Close"]
+    high = df["High"]
+    low = df["Low"]
+
+    # Exponential moving averages
+    df["EMA9"] = close.ewm(
+        span=9, adjust=False
+    ).mean()
+
+    df["EMA20"] = close.ewm(
+        span=20, adjust=False
+    ).mean()
+
+    df["EMA50"] = close.ewm(
+        span=50, adjust=False
+    ).mean()
+
+    # RSI 14
+    delta = close.diff()
+
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.ewm(
+        alpha=1/14,
+        adjust=False,
+        min_periods=14
+    ).mean()
+
+    avg_loss = loss.ewm(
+        alpha=1/14,
+        adjust=False,
+        min_periods=14
+    ).mean()
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+
+    df["RSI"] = 100 - (100 / (1 + rs))
+
+    df.loc[
+        (avg_loss == 0) & (avg_gain > 0),
+        "RSI"
+    ] = 100
+
+    df.loc[
+        (avg_gain == 0) & (avg_loss > 0),
+        "RSI"
+    ] = 0
+
+    # MACD
+    ema12 = close.ewm(
+        span=12, adjust=False
+    ).mean()
+
+    ema26 = close.ewm(
+        span=26, adjust=False
+    ).mean()
+
+    df["MACD"] = ema12 - ema26
+
+    df["MACD_Signal"] = df["MACD"].ewm(
+        span=9, adjust=False
+    ).mean()
+
+    # Average True Range
+    previous_close = close.shift(1)
+
+    tr = pd.concat([
+        high - low,
+        (high - previous_close).abs(),
+        (low - previous_close).abs()
+    ], axis=1).max(axis=1)
+
+    df["ATR"] = tr.ewm(
+        alpha=1/14,
+        adjust=False
+    ).mean()
+
+    # Recent support and resistance
+    df["Resistance"] = high.rolling(20).max().shift(1)
+
+    df["Support"] = low.rolling(20).min().shift(1)
+
+    return df.dropna()
+
+
+# -----------------------------------------------------
+# TRADE SETUP ANALYSIS
+# -----------------------------------------------------
+
+def detect_setup_v42(df):
+
+    latest = df.iloc[-1]
+
+    price = float(latest["Close"])
+    ema9 = float(latest["EMA9"])
+    ema20 = float(latest["EMA20"])
+    ema50 = float(latest["EMA50"])
+
+    rsi = float(latest["RSI"])
+
+    macd = float(latest["MACD"])
+    macd_signal = float(latest["MACD_Signal"])
+
+    atr = float(latest["ATR"])
+
+    support = float(latest["Support"])
+    resistance = float(latest["Resistance"])
+
+    buy_score = 0
+    sell_score = 0
+
+    reasons = []
+
+    # BUY CONDITIONS
+
+    if price > ema9 > ema20 > ema50:
+        buy_score += 1
+        reasons.append("Bullish EMA alignment")
+
+    if 50 <= rsi <= 70:
+        buy_score += 1
+        reasons.append("Bullish RSI momentum")
+
+    if macd > macd_signal:
+        buy_score += 1
+        reasons.append("Bullish MACD")
+
+    if price > resistance:
+        buy_score += 1
+        reasons.append("Resistance breakout")
+
+    # SELL CONDITIONS
+
+    if price < ema9 < ema20 < ema50:
+        sell_score += 1
+        reasons.append("Bearish EMA alignment")
+
+    if 30 <= rsi <= 50:
+        sell_score += 1
+        reasons.append("Bearish RSI momentum")
+
+    if macd < macd_signal:
+        sell_score += 1
+        reasons.append("Bearish MACD")
+
+    if price < support:
+        sell_score += 1
+        reasons.append("Support breakdown")
+
+    # SIGNAL CLASSIFICATION
+
+    direction = "NO TRADE"
+    score = max(buy_score, sell_score)
+
+    if buy_score >= 3 and buy_score > sell_score:
+        direction = "BUY"
+
+    elif sell_score >= 3 and sell_score > buy_score:
+        direction = "SELL"
+
+    elif score >= 2:
+        direction = "WATCH"
+
+    # ATR RISK MANAGEMENT
+
+    if direction in ["BUY", "SELL"] and atr > 0:
+
+        if direction == "BUY":
+
+            stop_loss = price - (1.5 * atr)
+
+            tp1 = price + (1.5 * atr)
+            tp2 = price + (3 * atr)
+            tp3 = price + (4.5 * atr)
+
+        else:
+
+            stop_loss = price + (1.5 * atr)
+
+            tp1 = price - (1.5 * atr)
+            tp2 = price - (3 * atr)
+            tp3 = price - (4.5 * atr)
+
+        risk = abs(price - stop_loss)
+
+        reward = abs(tp2 - price)
+
+        risk_reward = reward / risk
+
+    else:
+
+        stop_loss = np.nan
+        tp1 = np.nan
+        tp2 = np.nan
+        tp3 = np.nan
+        risk_reward = np.nan
+
+    return {
+        "Direction": direction,
+        "Score": f"{score}/4",
+        "Price": price,
+        "RSI": round(rsi, 2),
+        "ATR": atr,
+        "Support": support,
+        "Resistance": resistance,
+        "Stop Loss": stop_loss,
+        "TP1": tp1,
+        "TP2": tp2,
+        "TP3": tp3,
+        "Risk Reward": risk_reward,
+        "Reasons": ", ".join(reasons)
+    }
+
+
+# -----------------------------------------------------
+# VERSION 4.2 SCANNER
+# -----------------------------------------------------
+
+if st.button(
+    "🎯 RUN TECHNICAL SETUP SCAN",
+    key="v42_scan"
+):
+
+    setups = []
+
+    progress = st.progress(0)
+
+    status = st.empty()
+
+    total = len(MARKETS_V4) * len(TIMEFRAMES_V42)
+
+    completed = 0
+
+    for market, symbol in MARKETS_V4.items():
+
+        for timeframe in TIMEFRAMES_V42:
+
+            status.write(
+                f"Analysing {market} - {timeframe}"
+            )
+
+            try:
+
+                data = get_ohlc_v42(
+                    symbol,
+                    timeframe
+                )
+
+                if data is not None:
+
+                    analysed = calculate_indicators_v42(
+                        data
+                    )
+
+                    if not analysed.empty:
+
+                        result = detect_setup_v42(
+                            analysed
+                        )
+
+                        setups.append({
+                            "Market": market,
+                            "Timeframe": timeframe,
+                            **result
+                        })
+
+            except Exception as error:
+
+                pass
+
+            completed += 1
+
+            progress.progress(completed / total)
+
+    status.success("Technical analysis completed!")
+
+    if setups:
+
+        results = pd.DataFrame(setups)
+
+        st.subheader("Technical Analysis Results")
+
+        st.dataframe(
+            results[
+                [
+                    "Market",
+                    "Timeframe",
+                    "Direction",
+                    "Score",
+                    "RSI"
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.subheader("Potential Trade Opportunities")
+
+        opportunities = results[
+            results["Direction"].isin(["BUY", "SELL"])
+        ].copy()
+
+        if not opportunities.empty:
+
+            st.dataframe(
+                opportunities[
+                    [
+                        "Market",
+                        "Timeframe",
+                        "Direction",
+                        "Price",
+                        "Stop Loss",
+                        "TP1",
+                        "TP2",
+                        "TP3",
+                        "Risk Reward"
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True
+            )
+
+        else:
+
+            st.info(
+                "No qualifying trade setups found. "
+                "The system will not force a trade."
+            )
+
+        st.subheader("Watchlist")
+
+        watchlist = results[
+            results["Direction"] == "WATCH"
+        ]
+
+        st.dataframe(
+            watchlist[
+                ["Market", "Timeframe", "Score", "RSI"]
+            ],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.subheader("Technical Reasons")
+
+        for _, row in opportunities.iterrows():
+
+            with st.expander(
+                f"{row['Market']} - {row['Timeframe']} - {row['Direction']}"
+            ):
+
+                st.write(row["Reasons"])
+
+                st.write(
+                    f"Support: {row['Support']:.5f}"
+                )
+
+                st.write(
+                    f"Resistance: {row['Resistance']:.5f}"
+                )
+
+        st.caption(
+            "Version 4.2 uses rule-based technical analysis. "
+            "Signals are not guaranteed trading opportunities. "
+            "Confirm candle closure, spreads, execution costs "
+            "and risk before trading."
+        )
+
+    else:
+
+        st.warning(
+            "No technical data was successfully analysed."
+        )

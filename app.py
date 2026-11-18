@@ -541,20 +541,11 @@ profit target or probability of success.
     )
 
     response = requests.post(
-        endpoint,
-        params={"key": api_key},
-        json={
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 2500
-            }
-        },
-        timeout=90
-    )
-
+    url,
+    params={"key": api_key},
+    json=payload,
+    timeout=(20, 180)
+)
     if response.status_code != 200:
         raise RuntimeError(
             f"Gemini API error {response.status_code}: "

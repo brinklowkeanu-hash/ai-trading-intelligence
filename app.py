@@ -1822,3 +1822,375 @@ if st.button(
         st.warning(
             "No technical data was successfully analysed."
         )
+
+
+# =====================================================
+# VERSION 4.3 - MULTI-TIMEFRAME CONFIRMATION ENGINE
+# =====================================================
+
+st.divider()
+st.header("🧠 Version 4.3 - Signal Confirmation Engine")
+
+CONFIRMATION_TIMEFRAMES = [
+    "Daily",
+    "4 Hour",
+    "1 Hour",
+    "15 Minute",
+    "5 Minute"
+]
+
+HIGHER_TIMEFRAMES = [
+    "Daily",
+    "4 Hour",
+    "1 Hour"
+]
+
+ENTRY_TIMEFRAMES = [
+    "15 Minute",
+    "5 Minute"
+]
+
+
+# -----------------------------------------------------
+# CONFIRMATION LOGIC
+# -----------------------------------------------------
+
+def confirm_signal_v43(signals):
+
+    higher_buy = sum(
+        signals.get(tf) == "BUY"
+        for tf in HIGHER_TIMEFRAMES
+    )
+
+    higher_sell = sum(
+        signals.get(tf) == "SELL"
+        for tf in HIGHER_TIMEFRAMES
+    )
+
+    entry_buy = sum(
+        signals.get(tf) == "BUY"
+        for tf in ENTRY_TIMEFRAMES
+    )
+
+    entry_sell = sum(
+        signals.get(tf) == "SELL"
+        for tf in ENTRY_TIMEFRAMES
+    )
+
+    available = sum(
+        signals.get(tf) in ["BUY", "SELL", "WATCH", "NO TRADE"]
+        for tf in CONFIRMATION_TIMEFRAMES
+    )
+
+    direction = "NO TRADE"
+    confirmation = "INSUFFICIENT DATA"
+
+    # Confirmed BUY
+    if (
+        available == 5
+        and higher_buy >= 2
+        and higher_sell == 0
+        and entry_buy == 2
+        and entry_sell == 0
+    ):
+
+        direction = "BUY"
+        confirmation = "CONFIRMED BUY"
+
+    # Confirmed SELL
+    elif (
+        available == 5
+        and higher_sell >= 2
+        and higher_buy == 0
+        and entry_sell == 2
+        and entry_buy == 0
+    ):
+
+        direction = "SELL"
+        confirmation = "CONFIRMED SELL"
+
+    # Partial bullish alignment
+    elif (
+        higher_buy >= 2
+        and higher_sell == 0
+        and entry_sell == 0
+    ):
+
+        direction = "BUY"
+        confirmation = "BULLISH WATCH"
+
+    # Partial bearish alignment
+    elif (
+        higher_sell >= 2
+        and higher_buy == 0
+        and entry_buy == 0
+    ):
+
+        direction = "SELL"
+        confirmation = "BEARISH WATCH"
+
+    # Conflicting directions
+    elif higher_buy > 0 and higher_sell > 0:
+
+        confirmation = "CONFLICTING TRENDS"
+
+    elif entry_buy > 0 and entry_sell > 0:
+
+        confirmation = "ENTRY TIMEFRAME CONFLICT"
+
+    elif available < 5:
+
+        confirmation = "MISSING TIMEFRAME DATA"
+
+    else:
+
+        confirmation = "NO VALID CONFIRMATION"
+
+    return {
+        "Final Direction": direction,
+        "Confirmation": confirmation,
+        "Higher Bullish": higher_buy,
+        "Higher Bearish": higher_sell,
+        "Entry Bullish": entry_buy,
+        "Entry Bearish": entry_sell,
+        "Available Timeframes": available
+    }
+
+
+# -----------------------------------------------------
+# MULTI-TIMEFRAME SCANNER
+# -----------------------------------------------------
+
+if st.button(
+    "🧠 RUN MULTI-TIMEFRAME CONFIRMATION",
+    key="v43_confirmation_scan"
+):
+
+    market_results = []
+    detailed_results = []
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    total = (
+        len(MARKETS_V4) *
+        len(CONFIRMATION_TIMEFRAMES)
+    )
+
+    completed = 0
+
+    for market, symbol in MARKETS_V4.items():
+
+        market_signals = {}
+
+        for timeframe in CONFIRMATION_TIMEFRAMES:
+
+            status.write(
+                f"Confirming {market} - {timeframe}..."
+            )
+
+            try:
+
+                data = get_ohlc_v42(
+                    symbol,
+                    timeframe
+                )
+
+                if data is not None:
+
+                    analysed = calculate_indicators_v42(
+                        data
+                    )
+
+                    if not analysed.empty:
+
+                        result = detect_setup_v42(
+                            analysed
+                        )
+
+                        signal = result["Direction"]
+
+                        market_signals[timeframe] = signal
+
+                        detailed_results.append({
+                            "Market": market,
+                            "Timeframe": timeframe,
+                            "Direction": signal,
+                            "Score": result["Score"],
+                            "RSI": result["RSI"],
+                            "Price": result["Price"]
+                        })
+
+            except Exception:
+
+                pass
+
+            completed += 1
+
+            progress.progress(
+                completed / total
+            )
+
+        # Analyse all five timeframes
+
+        confirmation = confirm_signal_v43(
+            market_signals
+        )
+
+        market_results.append({
+            "Market": market,
+            **confirmation
+        })
+
+    status.success(
+        "Multi-timeframe confirmation completed!"
+    )
+
+    # -------------------------------------------------
+    # DISPLAY MARKET CONFIRMATION
+    # -------------------------------------------------
+
+    if market_results:
+
+        confirmation_df = pd.DataFrame(
+            market_results
+        )
+
+        st.subheader("Market Confirmation Results")
+
+        st.dataframe(
+            confirmation_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # -------------------------------------------------
+        # CONFIRMED OPPORTUNITIES
+        # -------------------------------------------------
+
+        st.subheader("Confirmed Trade Opportunities")
+
+        confirmed = confirmation_df[
+            confirmation_df["Confirmation"].isin([
+                "CONFIRMED BUY",
+                "CONFIRMED SELL"
+            ])
+        ]
+
+        if not confirmed.empty:
+
+            st.dataframe(
+                confirmed[
+                    [
+                        "Market",
+                        "Final Direction",
+                        "Confirmation",
+                        "Available Timeframes"
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True
+            )
+
+        else:
+
+            st.info(
+                "No fully confirmed opportunities found. "
+                "Wait for stronger timeframe alignment."
+            )
+
+        # -------------------------------------------------
+        # WATCHLIST
+        # -------------------------------------------------
+
+        st.subheader("Potential Setups - Watchlist")
+
+        watchlist = confirmation_df[
+            confirmation_df["Confirmation"].isin([
+                "BULLISH WATCH",
+                "BEARISH WATCH"
+            ])
+        ]
+
+        if not watchlist.empty:
+
+            st.dataframe(
+                watchlist[
+                    [
+                        "Market",
+                        "Final Direction",
+                        "Confirmation",
+                        "Higher Bullish",
+                        "Higher Bearish"
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True
+            )
+
+        else:
+
+            st.write("No developing setups detected.")
+
+        # -------------------------------------------------
+        # TIMEFRAME DETAILS
+        # -------------------------------------------------
+
+        st.subheader("Individual Timeframe Analysis")
+
+        if detailed_results:
+
+            detail_df = pd.DataFrame(
+                detailed_results
+            )
+
+            selected_market = st.selectbox(
+                "Choose a market",
+                list(MARKETS_V4.keys()),
+                key="v43_market_details"
+            )
+
+            market_details = detail_df[
+                detail_df["Market"] == selected_market
+            ]
+
+            st.dataframe(
+                market_details,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        # -------------------------------------------------
+        # SUMMARY
+        # -------------------------------------------------
+
+        st.subheader("Confirmation Statistics")
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Confirmed",
+            len(confirmed)
+        )
+
+        col2.metric(
+            "Watchlist",
+            len(watchlist)
+        )
+
+        col3.metric(
+            "Markets Scanned",
+            len(confirmation_df)
+        )
+
+        st.info(
+            "Confirmation requires agreement between higher "
+            "timeframes and both entry timeframes. "
+            "A confirmed signal is not a guarantee of profitability."
+        )
+
+    else:
+
+        st.warning(
+            "No market confirmation data available."
+        )

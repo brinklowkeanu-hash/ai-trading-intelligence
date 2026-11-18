@@ -558,6 +558,7 @@ profit target or probability of success.
         }
     }
 
+    
     # API request with automatic retries
     for attempt in range(5):
 
@@ -572,10 +573,10 @@ profit target or probability of success.
 
             if response.status_code == 429 or response.status_code >= 500:
 
-            if attempt < 4:
-    wait_time = [5, 10, 20, 30, 45][attempt]
-    time.sleep(wait_time)
-    continue
+                if attempt < 4:
+                    wait_time = [5, 10, 20, 30, 45][attempt]
+                    time.sleep(wait_time)
+                    continue
 
             if response.status_code != 200:
                 raise RuntimeError(
@@ -593,6 +594,7 @@ profit target or probability of success.
                     "Gemini returned an unexpected response. "
                     + str(result)[:500]
                 )
+
 
         except requests.exceptions.Timeout:
 

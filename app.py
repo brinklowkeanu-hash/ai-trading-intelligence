@@ -187,6 +187,8 @@ def analyse_sentiment(headline):
 # --------------------------------------------------
 
 @st.cache_data(ttl=900)
+
+@st.cache_data(ttl=900)
 def get_news(search_query):
 
     endpoint = "https://api.gdeltproject.org/api/v2/doc/doc"
@@ -195,62 +197,84 @@ def get_news(search_query):
         "query": search_query,
         "mode": "ArtList",
         "format": "json",
-        "maxrecords": 50,
-        "timespan": "7d",
+        "maxrecords": 20,
+        "timespan": "3d",
         "sort": "DateDesc"
     }
 
-    response = requests.get(
-        endpoint,
-        params=params,
-        timeout=25
-    )
+    try:
+        response = requests.get(
+            endpoint,
+            params=params,
+            headers={
+                "User-Agent": "AITradingIntelligence/2.0"
+            },
+            timeout=40
+        )
 
-    response.raise_for_status()
+        if response.status_code == 429:
+            raise RuntimeError(
+                "GDELT rate limit reached. "
+                "Wait at least 60 seconds before trying again."
+            )
 
-    result = response.json()
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"GDELT HTTP error: {response.status_code}. "
+                f"Response: {response.text[:300]}"
+            )
 
-    articles = result.get("articles", [])
+        try:
+            result = response.json()
+        except ValueError:
+            raise RuntimeError(
+                "GDELT returned invalid JSON. "
+                f"Response: {response.text[:300]}"
+            )
 
-    if not articles:
-        return pd.DataFrame()
+        articles = result.get("articles", [])
 
-    news = pd.DataFrame(articles)
+        if not articles:
+            return pd.DataFrame()
 
-    columns = [
-        "title",
-        "url",
-        "seendate",
-        "domain",
-        "language",
-        "sourcecountry"
-    ]
+        news = pd.DataFrame(articles)
 
-    for column in columns:
-        if column not in news.columns:
-            news[column] = ""
+        columns = [
+            "title", "url", "seendate",
+            "domain", "language", "sourcecountry"
+        ]
 
-    news["Sentiment"], news["Sentiment Score"] = zip(
-        *news["title"].apply(analyse_sentiment)
-    )
+        for column in columns:
+            if column not in news.columns:
+                news[column] = ""
 
-    news["Date"] = pd.to_datetime(
-        news["seendate"],
-        format="%Y%m%dT%H%M%SZ",
-        errors="coerce",
-        utc=True
-    )
+        sentiment = news["title"].apply(analyse_sentiment)
 
-    return news[[
-        "title",
-        "url",
-        "Date",
-        "domain",
-        "language",
-        "sourcecountry",
-        "Sentiment",
-        "Sentiment Score"
-    ]]
+        news["Sentiment"] = sentiment.apply(lambda x: x[0])
+        news["Sentiment Score"] = sentiment.apply(lambda x: x[1])
+
+        news["Date"] = pd.to_datetime(
+            news["seendate"],
+            format="%Y%m%dT%H%M%SZ",
+            errors="coerce",
+            utc=True
+        )
+
+        return news[[
+            "title", "url", "Date", "domain",
+            "language", "sourcecountry",
+            "Sentiment", "Sentiment Score"
+        ]]
+
+    except requests.exceptions.Timeout:
+        raise RuntimeError(
+            "GDELT connection timed out. Try again later."
+        )
+
+    except requests.exceptions.RequestException as error:
+        raise RuntimeError(
+            f"Network connection failed: {error}"
+        )
 
 
 # --------------------------------------------------

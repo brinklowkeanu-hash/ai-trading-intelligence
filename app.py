@@ -189,81 +189,115 @@ def analyse_sentiment(headline):
 @st.cache_data(ttl=900)
 
 @st.cache_data(ttl=900)
+
+@st.cache_data(ttl=900)
 def get_news(search_query):
 
-    endpoint = "https://api.gdeltproject.org/api/v2/doc/doc"
+    import xml.etree.ElementTree as ET
+
+    endpoint = "https://news.google.com/rss/search"
 
     params = {
-        "query": search_query,
-        "mode": "ArtList",
-        "format": "json",
-        "maxrecords": 20,
-        "timespan": "3d",
-        "sort": "DateDesc"
+        "q": search_query,
+        "hl": "en-US",
+        "gl": "US",
+        "ceid": "US:en"
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 AITradingIntelligence/2.0"
     }
 
     try:
         response = requests.get(
             endpoint,
             params=params,
-            headers={
-                "User-Agent": "AITradingIntelligence/2.0"
-            },
-            timeout=40
+            headers=headers,
+            timeout=30
         )
 
         if response.status_code == 429:
             raise RuntimeError(
-                "GDELT rate limit reached. "
-                "Wait at least 60 seconds before trying again."
+                "Google News rate limit reached. "
+                "Please wait before retrying."
             )
 
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"GDELT HTTP error: {response.status_code}. "
-                f"Response: {response.text[:300]}"
+        response.raise_for_status()
+
+        root = ET.fromstring(response.content)
+
+        articles = []
+
+        for item in root.findall(".//item"):
+
+            title = item.findtext("title", default="")
+            url = item.findtext("link", default="")
+            pubdate = item.findtext("pubDate", default="")
+
+            source_element = item.find("source")
+
+            domain = (
+                source_element.text
+                if source_element is not None
+                else "Unknown publisher"
             )
 
-        try:
-            result = response.json()
-        except ValueError:
-            raise RuntimeError(
-                "GDELT returned invalid JSON. "
-                f"Response: {response.text[:300]}"
-            )
-
-        articles = result.get("articles", [])
+            articles.append({
+                "title": title,
+                "url": url,
+                "Date": pubdate,
+                "domain": domain,
+                "language": "en",
+                "sourcecountry": ""
+            })
 
         if not articles:
             return pd.DataFrame()
 
         news = pd.DataFrame(articles)
 
-        columns = [
-            "title", "url", "seendate",
-            "domain", "language", "sourcecountry"
-        ]
-
-        for column in columns:
-            if column not in news.columns:
-                news[column] = ""
-
-        sentiment = news["title"].apply(analyse_sentiment)
-
-        news["Sentiment"] = sentiment.apply(lambda x: x[0])
-        news["Sentiment Score"] = sentiment.apply(lambda x: x[1])
-
         news["Date"] = pd.to_datetime(
-            news["seendate"],
-            format="%Y%m%dT%H%M%SZ",
+            news["Date"],
             errors="coerce",
             utc=True
         )
 
+        sentiment = news["title"].apply(analyse_sentiment)
+
+        news["Sentiment"] = sentiment.apply(
+            lambda x: x[0]
+        )
+
+        news["Sentiment Score"] = sentiment.apply(
+            lambda x: x[1]
+        )
+
         return news[[
-            "title", "url", "Date", "domain",
-            "language", "sourcecountry",
-            "Sentiment", "Sentiment Score"
+            "title",
+            "url",
+            "Date",
+            "domain",
+            "language",
+            "sourcecountry",
+            "Sentiment",
+            "Sentiment Score"
+        ]]
+
+    except requests.exceptions.Timeout:
+        raise RuntimeError(
+            "Google News connection timed out."
+        )
+
+    except requests.exceptions.RequestException as error:
+        raise RuntimeError(
+            f"Google News connection failed: {error}"
+        )
+
+    except ET.ParseError:
+        raise RuntimeError(
+            "Google News returned an invalid RSS feed."
+        )
+
         ]]
 
     except requests.exceptions.Timeout:

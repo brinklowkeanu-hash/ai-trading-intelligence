@@ -559,35 +559,63 @@ profit target or probability of success.
     }
 
     
-    # API request with automatic retries
-    for attempt in range(5):
+    
+    # API request with automatic model fallback
 
-        try:
+    models = [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite"
+    ]
 
-            response = requests.post(
-                endpoint,
-                params={"key": api_key},
-                json=payload,
-                timeout=(20, 180)
-            )
+    last_error = None
 
-            if response.status_code == 429 or response.status_code >= 500:
+    for model in models:
+
+        endpoint = (
+            "https://generativelanguage.googleapis.com/"
+            f"v1beta/models/{model}:generateContent"
+        )
+
+        for attempt in range(5):
+
+            try:
+                response = requests.post(
+                    endpoint,
+                    params={"key": api_key},
+                    json=payload,
+                    timeout=(20, 180)
+                )
+
+                if response.status_code == 429 or response.status_code >= 500:
+
+                    if attempt < 4:
+                        wait_time = [5, 10, 20, 30, 45][attempt]
+                        time.sleep(wait_time)
+                        continue
+
+                if response.status_code != 200:
+                    last_error = (
+                        f"Gemini {model} error "
+                        f"{response.status_code}: "
+                        f"{response.text[:500]}"
+                    )
+
+                    break
+
+                result = response.json()
+
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+
+            except requests.exceptions.RequestException as e:
+
+                last_error = str(e)
 
                 if attempt < 4:
                     wait_time = [5, 10, 20, 30, 45][attempt]
                     time.sleep(wait_time)
                     continue
 
-            if response.status_code != 200:
-                raise RuntimeError(
-                    f"Gemini API error {response.status_code}: "
-                    f"{response.text[:500]}"
-                )
-
-            result = response.json()
-
-            try:
-                return result["candidates"][0]["content"]["parts"][0]["text"]
+                break
 
             except (KeyError, IndexError, TypeError):
                 raise RuntimeError(
@@ -595,29 +623,11 @@ profit target or probability of success.
                     + str(result)[:500]
                 )
 
-
-        except requests.exceptions.Timeout:
-
-            if attempt == 2:
-                raise RuntimeError(
-                    "Gemini API timed out after 3 attempts. "
-                    "Please try again later."
-                )
-
-            time.sleep(2 ** (attempt + 1))
-
-        except requests.exceptions.RequestException as error:
-
-            if attempt == 2:
-                raise RuntimeError(
-                    f"Gemini connection failed: {error}"
-                )
-
-            time.sleep(2 ** (attempt + 1))
-
     raise RuntimeError(
-        "Gemini analysis could not be completed."
+        "All Gemini models failed. Last error: "
+        + str(last_error)
     )
+
 
 
 # --------------------------------------------------

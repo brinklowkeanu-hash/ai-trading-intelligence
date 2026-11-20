@@ -2625,6 +2625,7 @@ def calculate_quality_v44(timeframe_results, confirmation):
 # VERSION 4.4 MARKET SCANNER
 # -----------------------------------------------------
 
+
 if st.button(
     "🚀 RUN VERSION 4.4 SIGNAL QUALITY SCANNER",
     key="v44_quality_scan"
@@ -2735,22 +2736,23 @@ if st.button(
 
         # Get entry timeframe trade levels
 
-entry_tf = "15 Minute"
+        entry_tf = "15 Minute"
 
-entry_setup = timeframe_results.get(entry_tf, {})
+        entry_setup = timeframe_results.get(
+            entry_tf, {}
+        )
 
-v44_results.append({
-    "Market": market,
-    **quality,
-
-    "Entry Timeframe": entry_tf,
-    "Entry Price": entry_setup.get("Price"),
-    "Stop Loss": entry_setup.get("Stop Loss"),
-    "TP1": entry_setup.get("TP1"),
-    "TP2": entry_setup.get("TP2"),
-    "TP3": entry_setup.get("TP3"),
-    "Risk Reward": entry_setup.get("Risk Reward")
-})
+        v44_results.append({
+            "Market": market,
+            **quality,
+            "Entry Timeframe": entry_tf,
+            "Entry Price": entry_setup.get("Price"),
+            "Stop Loss": entry_setup.get("Stop Loss"),
+            "TP1": entry_setup.get("TP1"),
+            "TP2": entry_setup.get("TP2"),
+            "TP3": entry_setup.get("TP3"),
+            "Risk Reward": entry_setup.get("Risk Reward")
+        })
 
     # -------------------------------------------------
     # RANK RESULTS
@@ -2794,39 +2796,65 @@ v44_results.append({
         len(v44_results) - len(candidates)
     )
 
+    # -------------------------------------------------
+    # ENTRY, STOP LOSS AND TARGETS
+    # -------------------------------------------------
+
+    st.subheader(
+        "🎯 Entry, Stop Loss & Take Profit"
+    )
+
+    level_rows = []
+
+    for r in v44_results:
+
+        if r["Entry Price"] is not None:
+
+            level_rows.append({
+                "Market": r["Market"],
+                "Direction": r["Final Direction"],
+                "Confirmation": r["Confirmation"],
+                "Decision": (
+                    "ELIGIBLE"
+                    if r["Eligible"]
+                    else "REJECTED / WATCH"
+                ),
+                "Entry": r["Entry Price"],
+                "Stop Loss": r["Stop Loss"],
+                "TP1": r["TP1"],
+                "TP2": r["TP2"],
+                "TP3": r["TP3"],
+                "Risk/Reward": r["Risk Reward"]
+            })
+
+    if level_rows:
+
+        st.dataframe(
+            pd.DataFrame(level_rows),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.caption(
+            "Rejected setups are displayed for analysis only. "
+            "Do not treat them as approved trades."
+        )
+
+    else:
+
+        st.info(
+            "No BUY or SELL entry setups with available "
+            "entry prices were found in this scan."
+        )
+
+    # -------------------------------------------------
+    # STRONGEST TRADING OPPORTUNITIES
+    # -------------------------------------------------
+
     st.subheader(
         "🏆 Strongest Trading Opportunities"
     )
 
-st.subheader("🎯 Entry, Stop Loss & Take Profit")
-
-if candidates:
-
-    trade_levels = []
-
-    for r in candidates:
-
-        trade_levels.append({
-            "Market": r["Market"],
-            "Direction": r["Final Direction"],
-            "Entry": r["Entry Price"],
-            "Stop Loss": r["Stop Loss"],
-            "TP1": r["TP1"],
-            "TP2": r["TP2"],
-            "TP3": r["TP3"],
-            "Risk/Reward": r["Risk Reward"]
-        })
-
-    st.dataframe(
-        pd.DataFrame(trade_levels),
-        use_container_width=True,
-        hide_index=True
-    )
-
-else:
-
-    st.info("No eligible trade candidates currently available.")
-    
     if candidates:
 
         st.dataframe(
@@ -2864,129 +2892,16 @@ else:
         )
 
     # -------------------------------------------------
-    # ALL MARKET RESULTS
-    # -------------------------------------------------
-
-    st.subheader(
-        "📊 All Market Quality Scores"
-    )
-
-    st.dataframe(
-        pd.DataFrame([
-            {
-                "Market": r["Market"],
-                "Direction": r["Final Direction"],
-                "Confirmation": r["Confirmation"],
-                "Score": r["Quality Score"],
-                "Classification": r["Classification"],
-                "Decision": r["Decision"]
-            }
-            for r in v44_results
-        ]),
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # -------------------------------------------------
-    # DETAILED SCORING
-    # -------------------------------------------------
-
-    st.subheader(
-        "🔍 Detailed Signal Scoring"
-    )
-
-    for result in v44_results:
-
-        with st.expander(
-            f"{result['Market']} - "
-            f"{result['Quality Score']}/100 - "
-            f"{result['Decision']}"
-        ):
-
-            st.write(
-                "Confirmation:",
-                result["Confirmation"]
-            )
-
-            st.write(
-                "Direction:",
-                result["Final Direction"]
-            )
-
-            st.write(
-                "Classification:",
-                result["Classification"]
-            )
-
-            st.write(
-                "Higher timeframe points:",
-                result["Higher TF Points"], "/ 30"
-            )
-
-            st.write(
-                "Entry timeframe points:",
-                result["Entry TF Points"], "/ 25"
-            )
-
-            st.write(
-                "Technical points:",
-                result["Technical Points"], "/ 20"
-            )
-
-            st.write(
-                "Risk/reward points:",
-                result["Risk Reward Points"], "/ 15"
-            )
-
-            st.write(
-                "Momentum points:",
-                result["Momentum Points"], "/ 10"
-            )
-
-            st.write(
-                "Average risk/reward:",
-                result["Average Risk Reward"]
-            )
-
-            st.write(
-                "Rejection reasons:",
-                result["Rejection Reasons"] or "None"
-            )
-
-    # -------------------------------------------------
-    # TIMEFRAME DETAILS
-    # -------------------------------------------------
-
-    with st.expander(
-        "View all individual timeframe results"
-    ):
-
-        st.dataframe(
-            pd.DataFrame(v44_details),
-            use_container_width=True,
-            hide_index=True
-        )
-
-    # -------------------------------------------------
     # SCAN ERRORS
     # -------------------------------------------------
 
-    with st.expander(
-        f"View scan errors ({len(v44_errors)})"
-    ):
+    if v44_errors:
 
-        if v44_errors:
+        with st.expander("View scan errors"):
 
             for error in v44_errors:
                 st.write(error)
 
-        else:
-
-            st.success(
-                "No market data or analysis errors."
-            )
-
-    # Save results for later use
-
     st.session_state["v44_results"] = v44_results
     st.session_state["v44_details"] = v44_details
+

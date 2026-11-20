@@ -2253,3 +2253,697 @@ if st.button(
         st.warning(
             "No market confirmation data available."
         )
+
+
+# =====================================================
+# VERSION 4.4 - AI SIGNAL QUALITY SCORING ENGINE
+# =====================================================
+
+import math
+
+# -----------------------------------------------------
+# V4.4 SCORING SETTINGS
+# -----------------------------------------------------
+
+V44_MINIMUM_SCORE = 70
+V44_MINIMUM_RR = 1.5
+
+V44_SCORE_WEIGHTS = {
+    "Higher Timeframe Alignment": 30,
+    "Entry Timeframe Confirmation": 25,
+    "Technical Setup Strength": 20,
+    "Risk Reward Quality": 15,
+    "RSI Momentum": 10
+}
+
+
+# -----------------------------------------------------
+# HELPER FUNCTIONS
+# -----------------------------------------------------
+
+def number_v44(value):
+
+    try:
+        value = float(value)
+
+        if math.isfinite(value):
+            return value
+
+    except (TypeError, ValueError):
+        pass
+
+    return None
+
+
+def technical_score_v44(value):
+
+    try:
+        return float(str(value).split("/")[0])
+
+    except (ValueError, TypeError, IndexError):
+        return 0.0
+
+
+def rsi_points_v44(direction, rsi):
+
+    if rsi is None:
+        return 0
+
+    if direction == "BUY":
+
+        if 50 <= rsi <= 70:
+            return 2
+
+        if 45 <= rsi < 50 or 70 < rsi <= 75:
+            return 1
+
+    elif direction == "SELL":
+
+        if 30 <= rsi <= 50:
+            return 2
+
+        if 25 <= rsi < 30 or 50 < rsi <= 55:
+            return 1
+
+    return 0
+
+
+# -----------------------------------------------------
+# RISK MANAGEMENT VALIDATION
+# -----------------------------------------------------
+
+def validate_risk_v44(result, direction):
+
+    price = number_v44(result.get("Price"))
+    stop = number_v44(result.get("Stop Loss"))
+    tp1 = number_v44(result.get("TP1"))
+    tp2 = number_v44(result.get("TP2"))
+    tp3 = number_v44(result.get("TP3"))
+    rr = number_v44(result.get("Risk Reward"))
+
+    if None in [price, stop, tp1, tp2, tp3, rr]:
+
+        return False, "Missing risk management values"
+
+    if price <= 0 or rr <= 0:
+
+        return False, "Invalid price or risk/reward"
+
+    if direction == "BUY":
+
+        valid = (
+            stop < price
+            and tp1 > price
+            and tp2 > tp1
+            and tp3 > tp2
+        )
+
+    elif direction == "SELL":
+
+        valid = (
+            stop > price
+            and tp1 < price
+            and tp2 < tp1
+            and tp3 < tp2
+        )
+
+    else:
+
+        return False, "Invalid trade direction"
+
+    if not valid:
+
+        return False, "Stop loss or targets incorrectly positioned"
+
+    if rr < V44_MINIMUM_RR:
+
+        return False, "Risk/reward below minimum requirement"
+
+    return True, "Risk management passed"
+
+
+# -----------------------------------------------------
+# SIGNAL QUALITY SCORING
+# -----------------------------------------------------
+
+def calculate_quality_v44(timeframe_results, confirmation):
+
+    direction = confirmation["Final Direction"]
+    confirmation_status = confirmation["Confirmation"]
+
+    scores = {
+        "Higher Timeframe Alignment": 0,
+        "Entry Timeframe Confirmation": 0,
+        "Technical Setup Strength": 0,
+        "Risk Reward Quality": 0,
+        "RSI Momentum": 0
+    }
+
+    rejection_reasons = []
+
+    # Only fully confirmed signals can qualify
+
+    if confirmation_status not in [
+        "CONFIRMED BUY",
+        "CONFIRMED SELL"
+    ]:
+
+        rejection_reasons.append(
+            confirmation_status
+        )
+
+    if direction not in ["BUY", "SELL"]:
+
+        rejection_reasons.append(
+            "No confirmed trade direction"
+        )
+
+    # Check all five timeframes
+
+    if len(timeframe_results) != 5:
+
+        rejection_reasons.append(
+            "Incomplete timeframe data"
+        )
+
+    # Higher timeframe alignment
+
+    higher_aligned = sum(
+        timeframe_results.get(tf, {}).get("Direction") == direction
+        for tf in HIGHER_TIMEFRAMES
+    )
+
+    scores["Higher Timeframe Alignment"] = (
+        higher_aligned / len(HIGHER_TIMEFRAMES) * 30
+        if HIGHER_TIMEFRAMES else 0
+    )
+
+    # Entry timeframe confirmation
+
+    entry_aligned = sum(
+        timeframe_results.get(tf, {}).get("Direction") == direction
+        for tf in ENTRY_TIMEFRAMES
+    )
+
+    scores["Entry Timeframe Confirmation"] = (
+        entry_aligned / len(ENTRY_TIMEFRAMES) * 25
+        if ENTRY_TIMEFRAMES else 0
+    )
+
+    # Technical setup strength
+
+    technical_points = 0
+
+    for tf in CONFIRMATION_TIMEFRAMES:
+
+        result = timeframe_results.get(tf, {})
+
+        if result.get("Direction") == direction:
+
+            raw_score = technical_score_v44(
+                result.get("Score")
+            )
+
+            technical_points += min(
+                max(raw_score, 0),
+                4
+            )
+
+    scores["Technical Setup Strength"] = (
+        technical_points / (len(CONFIRMATION_TIMEFRAMES) * 4) * 20
+    )
+
+    # RSI momentum
+
+    momentum_points = 0
+
+    for tf in CONFIRMATION_TIMEFRAMES:
+
+        result = timeframe_results.get(tf, {})
+
+        rsi = number_v44(result.get("RSI"))
+
+        momentum_points += rsi_points_v44(
+            direction,
+            rsi
+        )
+
+    scores["RSI Momentum"] = (
+        momentum_points / (len(CONFIRMATION_TIMEFRAMES) * 2) * 10
+    )
+
+    # Risk/reward quality
+    # Both entry timeframes must have valid risk management.
+
+    entry_rr_values = []
+    risk_valid = True
+
+    for tf in ENTRY_TIMEFRAMES:
+
+        result = timeframe_results.get(tf)
+
+        if not result or result.get("Direction") != direction:
+
+            risk_valid = False
+
+            rejection_reasons.append(
+                f"{tf}: Missing matching entry setup"
+            )
+
+            continue
+
+        valid, message = validate_risk_v44(
+            result,
+            direction
+        )
+
+        if not valid:
+
+            risk_valid = False
+
+            rejection_reasons.append(
+                f"{tf}: {message}"
+            )
+
+        else:
+
+            entry_rr_values.append(
+                number_v44(result.get("Risk Reward"))
+            )
+
+    if risk_valid and len(entry_rr_values) == 2:
+
+        average_rr = sum(entry_rr_values) / 2
+
+        scores["Risk Reward Quality"] = min(
+            15,
+            (average_rr / 2) * 15
+        )
+
+    else:
+
+        average_rr = None
+
+    # Total score
+
+    total_score = round(
+        sum(scores.values()),
+        2
+    )
+
+    # Classification
+
+    if total_score >= 85:
+        classification = "STRONG"
+
+    elif total_score >= 70:
+        classification = "GOOD"
+
+    elif total_score >= 55:
+        classification = "MODERATE"
+
+    else:
+        classification = "WEAK"
+
+    # Final eligibility filters
+
+    eligible = (
+        confirmation_status in [
+            "CONFIRMED BUY",
+            "CONFIRMED SELL"
+        ]
+        and len(timeframe_results) == 5
+        and risk_valid
+        and len(entry_rr_values) == 2
+        and average_rr is not None
+        and average_rr >= V44_MINIMUM_RR
+        and total_score >= V44_MINIMUM_SCORE
+    )
+
+    if not eligible and not rejection_reasons:
+
+        rejection_reasons.append(
+            "Signal quality below minimum score"
+        )
+
+    decision = (
+        "TRADE CANDIDATE"
+        if eligible
+        else "REJECTED / WATCH"
+    )
+
+    return {
+        "Final Direction": direction,
+        "Confirmation": confirmation_status,
+        "Quality Score": total_score,
+        "Classification": classification,
+        "Decision": decision,
+        "Eligible": eligible,
+        "Average Risk Reward": average_rr,
+        "Higher TF Points": round(
+            scores["Higher Timeframe Alignment"], 2
+        ),
+        "Entry TF Points": round(
+            scores["Entry Timeframe Confirmation"], 2
+        ),
+        "Technical Points": round(
+            scores["Technical Setup Strength"], 2
+        ),
+        "Risk Reward Points": round(
+            scores["Risk Reward Quality"], 2
+        ),
+        "Momentum Points": round(
+            scores["RSI Momentum"], 2
+        ),
+        "Rejection Reasons": ", ".join(
+            dict.fromkeys(rejection_reasons)
+        )
+    }
+
+
+# -----------------------------------------------------
+# VERSION 4.4 MARKET SCANNER
+# -----------------------------------------------------
+
+if st.button(
+    "🚀 RUN VERSION 4.4 SIGNAL QUALITY SCANNER",
+    key="v44_quality_scan"
+):
+
+    v44_results = []
+    v44_details = []
+    v44_errors = []
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    total = (
+        len(MARKETS_V4)
+        * len(CONFIRMATION_TIMEFRAMES)
+    )
+
+    completed = 0
+
+    for market, symbol in MARKETS_V4.items():
+
+        market_signals = {}
+        timeframe_results = {}
+
+        for timeframe in CONFIRMATION_TIMEFRAMES:
+
+            status.write(
+                f"Scoring {market} - {timeframe}..."
+            )
+
+            try:
+
+                data = get_ohlc_v42(
+                    symbol,
+                    timeframe
+                )
+
+                if data is None or data.empty:
+
+                    market_signals[timeframe] = "MISSING"
+
+                    v44_errors.append(
+                        f"{market} - {timeframe}: No market data"
+                    )
+
+                else:
+
+                    analysed = calculate_indicators_v42(
+                        data
+                    )
+
+                    if analysed is None or analysed.empty:
+
+                        market_signals[timeframe] = "MISSING"
+
+                        v44_errors.append(
+                            f"{market} - {timeframe}: Indicator calculation failed"
+                        )
+
+                    else:
+
+                        result = detect_setup_v42(
+                            analysed
+                        )
+
+                        signal = result["Direction"]
+
+                        market_signals[timeframe] = signal
+
+                        timeframe_results[timeframe] = result
+
+                        v44_details.append({
+                            "Market": market,
+                            "Timeframe": timeframe,
+                            "Direction": signal,
+                            "Technical Score": result["Score"],
+                            "Price": result["Price"],
+                            "RSI": result["RSI"],
+                            "Risk Reward": result["Risk Reward"]
+                        })
+
+            except Exception as e:
+
+                market_signals[timeframe] = "MISSING"
+
+                v44_errors.append(
+                    f"{market} - {timeframe}: {str(e)[:150]}"
+                )
+
+            completed += 1
+
+            progress.progress(
+                completed / total
+            )
+
+        # Version 4.3 confirmation
+
+        confirmation = confirm_signal_v43(
+            market_signals
+        )
+
+        # Version 4.4 quality scoring
+
+        quality = calculate_quality_v44(
+            timeframe_results,
+            confirmation
+        )
+
+        v44_results.append({
+            "Market": market,
+            **quality
+        })
+
+    # -------------------------------------------------
+    # RANK RESULTS
+    # -------------------------------------------------
+
+    v44_results.sort(
+        key=lambda x: (
+            x["Eligible"],
+            x["Quality Score"]
+        ),
+        reverse=True
+    )
+
+    status.success(
+        "Version 4.4 signal quality scan completed!"
+    )
+
+    # -------------------------------------------------
+    # DASHBOARD SUMMARY
+    # -------------------------------------------------
+
+    candidates = [
+        r for r in v44_results
+        if r["Eligible"]
+    ]
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "Markets Scanned",
+        len(v44_results)
+    )
+
+    col2.metric(
+        "Trade Candidates",
+        len(candidates)
+    )
+
+    col3.metric(
+        "Markets Rejected / Watch",
+        len(v44_results) - len(candidates)
+    )
+
+    st.subheader(
+        "🏆 Strongest Trading Opportunities"
+    )
+
+    if candidates:
+
+        st.dataframe(
+            pd.DataFrame([
+                {
+                    "Rank": i + 1,
+                    "Market": r["Market"],
+                    "Direction": r["Final Direction"],
+                    "Quality Score": r["Quality Score"],
+                    "Classification": r["Classification"],
+                    "Average RR": round(
+                        r["Average Risk Reward"], 2
+                    )
+                }
+                for i, r in enumerate(candidates)
+            ]),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        best = candidates[0]
+
+        st.success(
+            f"Highest-ranked candidate: "
+            f"{best['Market']} | "
+            f"{best['Final Direction']} | "
+            f"{best['Quality Score']}/100"
+        )
+
+    else:
+
+        st.warning(
+            "No markets currently meet all Version 4.4 "
+            "trade eligibility requirements."
+        )
+
+    # -------------------------------------------------
+    # ALL MARKET RESULTS
+    # -------------------------------------------------
+
+    st.subheader(
+        "📊 All Market Quality Scores"
+    )
+
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "Market": r["Market"],
+                "Direction": r["Final Direction"],
+                "Confirmation": r["Confirmation"],
+                "Score": r["Quality Score"],
+                "Classification": r["Classification"],
+                "Decision": r["Decision"]
+            }
+            for r in v44_results
+        ]),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # -------------------------------------------------
+    # DETAILED SCORING
+    # -------------------------------------------------
+
+    st.subheader(
+        "🔍 Detailed Signal Scoring"
+    )
+
+    for result in v44_results:
+
+        with st.expander(
+            f"{result['Market']} - "
+            f"{result['Quality Score']}/100 - "
+            f"{result['Decision']}"
+        ):
+
+            st.write(
+                "Confirmation:",
+                result["Confirmation"]
+            )
+
+            st.write(
+                "Direction:",
+                result["Final Direction"]
+            )
+
+            st.write(
+                "Classification:",
+                result["Classification"]
+            )
+
+            st.write(
+                "Higher timeframe points:",
+                result["Higher TF Points"], "/ 30"
+            )
+
+            st.write(
+                "Entry timeframe points:",
+                result["Entry TF Points"], "/ 25"
+            )
+
+            st.write(
+                "Technical points:",
+                result["Technical Points"], "/ 20"
+            )
+
+            st.write(
+                "Risk/reward points:",
+                result["Risk Reward Points"], "/ 15"
+            )
+
+            st.write(
+                "Momentum points:",
+                result["Momentum Points"], "/ 10"
+            )
+
+            st.write(
+                "Average risk/reward:",
+                result["Average Risk Reward"]
+            )
+
+            st.write(
+                "Rejection reasons:",
+                result["Rejection Reasons"] or "None"
+            )
+
+    # -------------------------------------------------
+    # TIMEFRAME DETAILS
+    # -------------------------------------------------
+
+    with st.expander(
+        "View all individual timeframe results"
+    ):
+
+        st.dataframe(
+            pd.DataFrame(v44_details),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # -------------------------------------------------
+    # SCAN ERRORS
+    # -------------------------------------------------
+
+    with st.expander(
+        f"View scan errors ({len(v44_errors)})"
+    ):
+
+        if v44_errors:
+
+            for error in v44_errors:
+                st.write(error)
+
+        else:
+
+            st.success(
+                "No market data or analysis errors."
+            )
+
+    # Save results for later use
+
+    st.session_state["v44_results"] = v44_results
+    st.session_state["v44_details"] = v44_details

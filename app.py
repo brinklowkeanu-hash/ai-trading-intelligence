@@ -2733,10 +2733,24 @@ if st.button(
             confirmation
         )
 
-        v44_results.append({
-            "Market": market,
-            **quality
-        })
+        # Get entry timeframe trade levels
+
+entry_tf = "15 Minute"
+
+entry_setup = timeframe_results.get(entry_tf, {})
+
+v44_results.append({
+    "Market": market,
+    **quality,
+
+    "Entry Timeframe": entry_tf,
+    "Entry Price": entry_setup.get("Price"),
+    "Stop Loss": entry_setup.get("Stop Loss"),
+    "TP1": entry_setup.get("TP1"),
+    "TP2": entry_setup.get("TP2"),
+    "TP3": entry_setup.get("TP3"),
+    "Risk Reward": entry_setup.get("Risk Reward")
+})
 
     # -------------------------------------------------
     # RANK RESULTS
@@ -2784,6 +2798,35 @@ if st.button(
         "🏆 Strongest Trading Opportunities"
     )
 
+st.subheader("🎯 Entry, Stop Loss & Take Profit")
+
+if candidates:
+
+    trade_levels = []
+
+    for r in candidates:
+
+        trade_levels.append({
+            "Market": r["Market"],
+            "Direction": r["Final Direction"],
+            "Entry": r["Entry Price"],
+            "Stop Loss": r["Stop Loss"],
+            "TP1": r["TP1"],
+            "TP2": r["TP2"],
+            "TP3": r["TP3"],
+            "Risk/Reward": r["Risk Reward"]
+        })
+
+    st.dataframe(
+        pd.DataFrame(trade_levels),
+        use_container_width=True,
+        hide_index=True
+    )
+
+else:
+
+    st.info("No eligible trade candidates currently available.")
+    
     if candidates:
 
         st.dataframe(

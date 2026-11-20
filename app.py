@@ -1708,6 +1708,8 @@ def detect_setup_v42(df):
     return {
         "Direction": direction,
         "Score": f"{score}/4",
+        "Buy Score": buy_score,
+        "Sell Score": sell_score,
         "Price": price,
         "RSI": round(rsi, 2),
         "ATR": atr,
@@ -2626,6 +2628,85 @@ def calculate_quality_v44(timeframe_results, confirmation):
 # -----------------------------------------------------
 
 
+def calculate_provisional_levels_v44(setup):
+
+    no_levels = {
+        "Entry Price": None,
+        "Stop Loss": None,
+        "TP1": None,
+        "TP2": None,
+        "TP3": None,
+        "Level Direction": "NONE",
+        "Level Status": "NO LEVELS"
+    }
+
+    if not setup:
+        return no_levels
+
+    direction = setup.get("Direction")
+
+    level_status = "CALCULATED SETUP"
+
+    # Determine direction for WATCH setups
+    if direction == "WATCH":
+
+        buy_score = setup.get("Buy Score", 0)
+        sell_score = setup.get("Sell Score", 0)
+
+        if buy_score > sell_score:
+            direction = "BUY"
+
+        elif sell_score > buy_score:
+            direction = "SELL"
+
+        else:
+            return no_levels
+
+        level_status = "PROVISIONAL - WATCH"
+
+    elif direction not in ["BUY", "SELL"]:
+
+        return no_levels
+
+    try:
+
+        price = float(setup["Price"])
+        atr = float(setup["ATR"])
+
+        if not np.isfinite(price) or not np.isfinite(atr):
+            return no_levels
+
+        if price <= 0 or atr <= 0:
+            return no_levels
+
+        if direction == "BUY":
+
+            stop_loss = price - (1.5 * atr)
+            tp1 = price + (1.5 * atr)
+            tp2 = price + (3 * atr)
+            tp3 = price + (4.5 * atr)
+
+        else:
+
+            stop_loss = price + (1.5 * atr)
+            tp1 = price - (1.5 * atr)
+            tp2 = price - (3 * atr)
+            tp3 = price - (4.5 * atr)
+
+        return {
+            "Entry Price": price,
+            "Stop Loss": stop_loss,
+            "TP1": tp1,
+            "TP2": tp2,
+            "TP3": tp3,
+            "Level Direction": direction,
+            "Level Status": level_status
+        }
+
+    except (TypeError, ValueError, KeyError):
+
+        return no_levels
+
 if st.button(
     "🚀 RUN VERSION 4.4 SIGNAL QUALITY SCANNER",
     key="v44_quality_scan"
@@ -2734,6 +2815,7 @@ if st.button(
             confirmation
         )
 
+        
         # Get entry timeframe trade levels
 
         entry_tf = "15 Minute"
@@ -2742,17 +2824,25 @@ if st.button(
             entry_tf, {}
         )
 
+        entry_levels = calculate_provisional_levels_v44(
+            entry_setup
+        )
+
         v44_results.append({
             "Market": market,
             **quality,
+
             "Entry Timeframe": entry_tf,
-            "Entry Price": entry_setup.get("Price"),
-            "Stop Loss": entry_setup.get("Stop Loss"),
-            "TP1": entry_setup.get("TP1"),
-            "TP2": entry_setup.get("TP2"),
-            "TP3": entry_setup.get("TP3"),
-            "Risk Reward": entry_setup.get("Risk Reward")
+            "Entry Price": entry_levels["Entry Price"],
+            "Stop Loss": entry_levels["Stop Loss"],
+            "TP1": entry_levels["TP1"],
+            "TP2": entry_levels["TP2"],
+            "TP3": entry_levels["TP3"],
+            "Risk Reward": entry_setup.get("Risk Reward"),
+            "Level Direction": entry_levels["Level Direction"],
+            "Level Status": entry_levels["Level Status"]
         })
+
 
     # -------------------------------------------------
     # RANK RESULTS
@@ -2796,6 +2886,7 @@ if st.button(
         len(v44_results) - len(candidates)
     )
 
+    
     # -------------------------------------------------
     # ENTRY, STOP LOSS AND TARGETS
     # -------------------------------------------------
@@ -2808,23 +2899,38 @@ if st.button(
 
     for r in v44_results:
 
-        if r["Entry Price"] is not None:
+        if r.get("Entry Price") is not None:
 
             level_rows.append({
+
                 "Market": r["Market"],
-                "Direction": r["Final Direction"],
+
+                "Final Signal": r["Final Direction"],
+
+                "Potential Direction": r["Level Direction"],
+
+                "Level Status": r["Level Status"],
+
                 "Confirmation": r["Confirmation"],
-                "Decision": (
-                    "ELIGIBLE"
-                    if r["Eligible"]
-                    else "REJECTED / WATCH"
-                ),
+
+                "Decision": r["Decision"],
+
                 "Entry": r["Entry Price"],
+
                 "Stop Loss": r["Stop Loss"],
+
                 "TP1": r["TP1"],
+
                 "TP2": r["TP2"],
+
                 "TP3": r["TP3"],
-                "Risk/Reward": r["Risk Reward"]
+
+                "Risk/Reward": r["Risk Reward"],
+
+                "Quality Score": r["Quality Score"],
+
+                "Rejection Reason": r["Rejection Reasons"]
+
             })
 
     if level_rows:
@@ -2836,16 +2942,17 @@ if st.button(
         )
 
         st.caption(
-            "Rejected setups are displayed for analysis only. "
-            "Do not treat them as approved trades."
+            "PROVISIONAL WATCH levels are potential setups only. "
+            "REJECTED setups are not approved for trading."
         )
 
     else:
 
         st.info(
-            "No BUY or SELL entry setups with available "
-            "entry prices were found in this scan."
+            "No directional BUY or SELL setups with available "
+            "15-minute entry levels were found."
         )
+
 
     # -------------------------------------------------
     # STRONGEST TRADING OPPORTUNITIES
